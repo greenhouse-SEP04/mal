@@ -1,5 +1,7 @@
-pandas
-numpy
-scikit-learn
+fastapi
+uvicorn[standard]
 requests
+pandas
+scikit-learn
 joblib
+boto3
