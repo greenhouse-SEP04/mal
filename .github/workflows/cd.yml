@@ -25,24 +25,13 @@ jobs:
           chmod +x scripts/build_zip.sh
           ./scripts/build_zip.sh
 
-      - name: Debug Build Directory
-        run: |
-          echo "📁 Listing all contents recursively"
-          find mal/
-          echo "📁 Listing contents of mal/build/"
-          ls -lh mal/build/
-          echo "🔍 Checking ZIP file type"
-          file mal/build/ml_service.zip || echo "❌ ZIP not found!"
-          echo "✅ ZIP file size:"
-          du -h mal/build/ml_service.zip || echo "❌ Cannot get size!"
-
       - name: Create GitHub Release
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
           name: ML Service 1.0.0
           tag_name: 1.0.0
-          files: ./mal/build/ml_service.zip
+          files: ./build/ml_service.zip
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -57,7 +46,7 @@ jobs:
       - name: Upload ZIP to S3
         run: |
           echo "☁️ Uploading ZIP to S3..."
-          aws s3 cp mal/build/ml_service.zip \
+          aws s3 cp build/ml_service.zip \
             s3://greenhouse-ml-artifacts/ml_service.zip || echo "❌ Upload failed!"
 
       - name: Update Lambda code
