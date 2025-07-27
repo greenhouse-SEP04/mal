@@ -40,8 +40,8 @@ jobs:
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
-          name: ML Service ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
+          name: ML Service 1.0.0
+          tag_name: 1.0.0
           files: ./mal/build/ml_service.zip
           fail_on_unmatched_files: true
         env:
