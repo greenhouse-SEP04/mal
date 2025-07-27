@@ -12,16 +12,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Show Git Info (debug)
-        run: |
-          echo "🔧 Git Info"
-          git status
-          git tag
-          git log -1
-
       - name: Build ZIP
         run: |
-          echo "🔨 Running  build_zip.sh..."
+          echo "🔨 Running build_zip.sh..."
           chmod +x scripts/build_zip.sh
           ./scripts/build_zip.sh
 
@@ -36,23 +29,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Upload ZIP to S3
+      - name: Publish artifact to S3 and update Lambda
         run: |
-          echo "☁️ Uploading ZIP to S3..."
-          aws s3 cp build/ml_service.zip \
-            s3://greenhouse-ml-artifacts/ml_service.zip || echo "❌ Upload failed!"
-
-      - name: Update Lambda code
-        run: |
-          echo "🔁 Updating Lambda function..."
-          aws lambda update-function-code \
-            --function-name greenhouse-ml \
-            --s3-bucket greenhouse-ml-artifacts \
-            --s3-key ml_service.zip || echo "❌ Lambda update failed!"
+          echo "☁️ Uploading ZIP and updating Lambda..."
+          chmod +x scripts/publish_artifact.sh
+          S3_BUCKET=greenhouse-ml-artifacts \
+          ./scripts/publish_artifact.sh build/ml_service.zip ml_service.zip greenhouse-ml
+        env:
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_REGION: us-east-1
+          LOCALSTACK_ENDPOINT: http://localhost:4566
