@@ -3,7 +3,7 @@ name: ML‑Service CD
 on:
   push:
     tags:
-      - 'v*'   # Trigger only on version tags like v1.0.0
+      - 'v*'   # Trigger only on version tags  like v1.0.0
 
 jobs:
   build-and-release:
@@ -21,7 +21,7 @@ jobs:
 
       - name: Create GitHub Release
         id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: soft props/action-gh-release@v1
         with:
           name: ML Service ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
