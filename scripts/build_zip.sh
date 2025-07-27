@@ -1,5 +1,16 @@
-#!/usr/bin/env bash
+#!/bin/bash
+
 set -e
-rm -rf build
+
 mkdir -p build
-zip -r build/ml_service.zip src
+cd src
+
+# Rename and zip
+cp greenhouse_ml_service.py ../build/handler.py
+cd ../build
+
+# Install requirements locally into zip (optional for Lambda)
+pip install --target . -r ../requirements.txt
+
+# Package everything into ZIP
+zip -r ml_service.zip .

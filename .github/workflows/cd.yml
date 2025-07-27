@@ -13,18 +13,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: Show Git Info (debug)
+        run: |
+          echo "🔧 Git Info"
+          git status
+          git tag
+          git log -1
+
       - name: Build ZIP
         working-directory: mal
         run: |
+          echo "🔨 Running build_zip.sh..."
           chmod +x scripts/build_zip.sh
           ./scripts/build_zip.sh
 
-      - name: Verify ZIP exists before release
+      - name: Debug Build Directory
         run: |
+          echo "📁 Listing all contents recursively"
+          find mal/
           echo "📁 Listing contents of mal/build/"
           ls -lh mal/build/
           echo "🔍 Checking ZIP file type"
           file mal/build/ml_service.zip || echo "❌ ZIP not found!"
+          echo "✅ ZIP file size:"
+          du -h mal/build/ml_service.zip || echo "❌ Cannot get size!"
 
       - name: Create GitHub Release
         id: create_release
@@ -32,7 +44,7 @@ jobs:
         with:
           name: ML Service ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          files: mal/build/ml_service.zip
+          files: ./mal/build/ml_service.zip
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -48,7 +60,7 @@ jobs:
         run: |
           echo "☁️ Uploading ZIP to S3..."
           aws s3 cp mal/build/ml_service.zip \
-            s3://greenhouse-ml-artifacts/ml_service.zip
+            s3://greenhouse-ml-artifacts/ml_service.zip || echo "❌ Upload failed!"
 
       - name: Update Lambda code
         run: |
@@ -56,4 +68,4 @@ jobs:
           aws lambda update-function-code \
             --function-name greenhouse-ml \
             --s3-bucket greenhouse-ml-artifacts \
-            --s3-key ml_service.zip
+            --s3-key ml_service.zip || echo "❌ Lambda update failed!"
