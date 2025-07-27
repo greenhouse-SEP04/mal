@@ -21,11 +21,10 @@ jobs:
           git log -1
 
       - name: Build ZIP
-        working-directory: mal
         run: |
           echo "🔨 Running build_zip.sh..."
-          chmod +x scripts/build_zip.sh
-          ./scripts/build_zip.sh
+          chmod +x mal/scripts/build_zip.sh
+          ./mal/scripts/build_zip.sh
 
       - name: Debug Build Directory
         run: |
@@ -40,7 +39,7 @@ jobs:
 
       - name: Create GitHub Release
         id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: soft props/action-gh-release@v1
         with:
           name: ML Service ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
