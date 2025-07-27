@@ -3,7 +3,7 @@ name: ML‑Service CD
 on:
   push:
     tags:
-      - 'v*'   # Trigger only on version tags  like v1.0.0
+      - 'v*'   # Trigger only on version tags like v1.0.0
 
 jobs:
   build-and-release:
@@ -19,13 +19,21 @@ jobs:
           chmod +x scripts/build_zip.sh
           ./scripts/build_zip.sh
 
+      - name: Verify ZIP exists before release
+        run: |
+          echo "📁 Listing contents of mal/build/"
+          ls -lh mal/build/
+          echo "🔍 Checking ZIP file type"
+          file mal/build/ml_service.zip || echo "❌ ZIP not found!"
+
       - name: Create GitHub Release
         id: create_release
-        uses: soft props/action-gh-release@v1
+        uses: softprops/action-gh-release@v1
         with:
           name: ML Service ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           files: mal/build/ml_service.zip
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -38,11 +46,13 @@ jobs:
 
       - name: Upload ZIP to S3
         run: |
+          echo "☁️ Uploading ZIP to S3..."
           aws s3 cp mal/build/ml_service.zip \
             s3://greenhouse-ml-artifacts/ml_service.zip
 
       - name: Update Lambda code
         run: |
+          echo "🔁 Updating Lambda function..."
           aws lambda update-function-code \
             --function-name greenhouse-ml \
             --s3-bucket greenhouse-ml-artifacts \
