@@ -22,8 +22,9 @@ jobs:
       - name: Build ZIP
         run: |
           echo "🔨 Running build_zip.sh..."
-          chmod +x mal/scripts/build_zip.sh
-          ./mal/scripts/build_zip.sh
+          chmod +x scripts/build_zip.sh
+          ./scripts/build_zip.sh
+        working-directory: mal
 
       - name: Debug Build Directory
         run: |
