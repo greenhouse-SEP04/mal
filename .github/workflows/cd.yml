@@ -21,9 +21,9 @@ jobs:
 
       - name: Build ZIP
         run: |
-          echo "🔨 Running build_zip.sh..."
-          chmod +x mal/scripts/build_zip.sh
-          ./mal/scripts/build_zip.sh
+          echo "🔨 Running publish_artifact.sh..."
+          chmod +x mal/scripts/publish_artifact.sh
+          ./mal/scripts/publish_artifact.sh
 
       - name: Debug Build Directory
         run: |
