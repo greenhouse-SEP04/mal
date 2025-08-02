@@ -1,5 +1,5 @@
 import pandas as pd
-from src.greenhouse_ml_service import _fit_model, handler
+from src.handler import _fit_model, handler
 
 
 def test_fit_and_predict_regression(tmp_path, monkeypatch):

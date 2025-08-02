@@ -1,6 +1,6 @@
 import pandas as pd
 import pytest
-from src.greenhouse_ml_service import Preprocessor, _detect_feature_types
+from src.handler import Preprocessor, _detect_feature_types
 
 
 def test_detect_feature_types():
