@@ -1,16 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD="$ROOT/build"
 
-set -e
+rm -rf "$BUILD"
+mkdir -p "$BUILD"
 
-mkdir -p build
-cd src
+# Put the handler at build/handler.py
+cp "$ROOT/src/greenhouse_ml_service.py" "$BUILD/handler.py"
 
-# Rename and zip
-cp greenhouse_ml_service.py ../build/handler.py
-cd ../build
-
-# Install requirements locally into zip (optional for Lambda)
-pip install --target . -r ../requirements.txt
-
-# Package everything into ZIP
-zip -r ml_service.zip .
+# Only zip the handler (deps come from layers)
+cd "$BUILD"
+zip -qr ml_service.zip handler.py
+echo "Created $BUILD/ml_service.zip"
