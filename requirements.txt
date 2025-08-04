@@ -1,5 +1,14 @@
-boto3
-pandas
-numpy
-scikit-learn
-joblib
+# --- runtime deps (mirror the layer versions) -----------------
+numpy==1.26.4
+scipy==1.11.4
+pandas==2.1.4
+scikit-learn==1.3.2
+joblib==1.3.2
+threadpoolctl==3.2.0
+boto3>=1.34,<2.0
+
+# --- tooling / quality / test ---------------------------------
+pytest>=8.2,<9
+mypy==1.10.0
+black==24.3
+isort==5.13
