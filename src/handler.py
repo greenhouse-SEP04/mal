@@ -1,309 +1,289 @@
- """
- Greenhouse ML Lambda
- --------------------
- A *single* Lambda function that can **train** a model on telemetry data
- (triggered by an EventBridge schedule) *and* **serve predictions** via an
- HTTP endpoint (API Gateway or direct Lambda invoke).
-
- Environment variables
- ---------------------
- S3_BUCKET          – the telemetry bucket (and where the model will live)
- MIN_SAMPLES        – abort training if we have fewer rows than this
- AWS_ENDPOINT_URL   – optional; points boto3 to LocalStack during local dev
-
- S3 layout
- ---------
- <bucket>/YYYY‑MM‑DD.csv               – daily raw telemetry appended by API      ↲
- <bucket>/ml/training.csv              – optional curated training set (CSV)     ↲
- <bucket>/ml/models/<gid>.joblib       – persisted scikit‑learn model            ↲
-
- The daily CSVs follow the exact column order produced by TelemetryController.
- The *training* handler will automatically derive target labels if
- `ml_water` / `ml_vent` are missing: `water := soil<40`, `vent := hum<50`.
-
- The model is a single `MultiOutputClassifier(RandomForestClassifier)` with
- two binary targets (water / vent). Hyperparameters are deliberately kept
- conservative so the model fits inside the 15 MB tmp space & 60 s timeout.
- """
-
- from __future__ import annotations
-
- import io
- import json
- import logging
- import os
- from typing import Any, Dict, Tuple
-
- import boto3
- import joblib
- import numpy as np
- import pandas as pd
- from sklearn.ensemble import RandomForestClassifier
- from sklearn.metrics import accuracy_score
- from sklearn.model_selection import train_test_split
- from sklearn.multioutput import MultiOutputClassifier
-
- # ──────────────────────────────────────────────────────────────────────────────
- # Config & globals
- # ──────────────────────────────────────────────────────────────────────────────
-
- _BUCKET = os.getenv("S3_BUCKET")
- _MIN_SAMPLES = int(os.getenv("MIN_SAMPLES", "10"))
- _MODEL_PREFIX = "ml/models"  # within bucket
- _LOG = logging.getLogger()
- _LOG.setLevel(logging.INFO)
-
- _s3 = boto3.client("s3", endpoint_url=os.getenv("AWS_ENDPOINT_URL"))
-
- # hot‑cache model between invocations to save cold‑start time
- _MODEL_CACHE: Dict[str, Any] = {}
-
-
- # ──────────────────────────────────────────────────────────────────────────────
- # Small helpers
- # ──────────────────────────────────────────────────────────────────────────────
-
-
- def _parse_s3_uri(uri: str) -> Tuple[str, str]:
-     if not uri.startswith("s3://"):
-         raise ValueError("s3_uri must start with s3://…")
-     bucket, key = uri[5:].split("/", 1)
-     return bucket, key
-
-
- def _get_object(bucket: str, key: str) -> bytes:
-     return _s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-
-
- def _put_object(bucket: str, key: str, body: bytes) -> None:
-     _s3.put_object(Bucket=bucket, Key=key, Body=body)
-
-
- # ──────────────────────────────────────────────────────────────────────────────
- # Data wrangling
- # ──────────────────────────────────────────────────────────────────────────────
-
-
- _CSV_COLS = [
-     "device_mac",
-     "timestamp",
-     "temp",
-     "hum",
-     "soil",
-     "lux",
-     "level",
-     "motion",
-     "tamper",
-     "ax",
-     "ay",
-     "az",
-     "ml_water",
-     "ml_vent",
- ]
-
-
- def _load_csv(buf: bytes) -> pd.DataFrame:
-     """Read a Greenhouse telemetry CSV into a *typed* DataFrame."""
-
-     df = pd.read_csv(io.BytesIO(buf), header=None, names=_CSV_COLS)
-
-     # Convert obvious boolean-ish fields
-     df[["motion", "tamper"]] = df[["motion", "tamper"]].astype(int)
-     return df
-
-
- def _prepare_features(df: pd.DataFrame) -> pd.DataFrame:
-     """Return X with numeric features only & no NaNs."""
-
-     X = df[[
-         "temp",
-         "hum",
-         "soil",
-         "lux",
-         "level",
-         "motion",
-         "tamper",
-         "ax",
-         "ay",
-         "az",
-     ]].copy()
-     return X.dropna()
-
-
- def _derive_targets(df: pd.DataFrame) -> pd.DataFrame:
-     """Either use provided labels or derive simple heuristics."""
-
-     if df["ml_water"].notna().any():
-         y_water = df["ml_water"].fillna(0).astype(int)
-     else:
-         y_water = (df["soil"] < 40).astype(int)
-
-     if df["ml_vent"].notna().any():
-         y_vent = df["ml_vent"].fillna(0).astype(int)
-     else:
-         y_vent = (df["hum"] < 50).astype(int)
-
-     return pd.concat([y_water, y_vent], axis=1).rename(columns={0: "water", 1: "vent"})
-
-
- # ──────────────────────────────────────────────────────────────────────────────
- # Model I/O
- # ──────────────────────────────────────────────────────────────────────────────
-
-
- def _model_key(gid: str) -> str:
-     return f"{_MODEL_PREFIX}/{gid}.joblib"
-
-
- def _load_model(gid: str):
-     """Fetch & unpickle a model; cached for warm invocations."""
-
-     if gid in _MODEL_CACHE:
-         return _MODEL_CACHE[gid]
-
-     key = _model_key(gid)
-     try:
-         raw = _get_object(_BUCKET, key)
-     except _s3.exceptions.NoSuchKey:
-         _LOG.warning("No model at s3://%s/%s", _BUCKET, key)
-         return None
-
-     model = joblib.load(io.BytesIO(raw))
-     _MODEL_CACHE[gid] = model
-     return model
-
-
- def _save_model(gid: str, model) -> str:
-     key = _model_key(gid)
-     buf = io.BytesIO()
-     joblib.dump(model, buf)
-     _put_object(_BUCKET, key, buf.getvalue())
-     return key
-
-
- # ──────────────────────────────────────────────────────────────────────────────
- # Training
- # ──────────────────────────────────────────────────────────────────────────────
-
-
- def _handle_train(event: Dict[str, Any]) -> Dict[str, Any]:
-     s3_uri = event.get("s3_uri")
-     gid = event.get("greenhouse_id", "default")
-
-     if not s3_uri:
-         raise KeyError("s3_uri missing in training event")
-
-     bucket, key = _parse_s3_uri(s3_uri)
-     _LOG.info("Training from %s/%s", bucket, key)
-
-     df = _load_csv(_get_object(bucket, key))
-
-     if len(df) < _MIN_SAMPLES:
-         msg = f"{len(df)} samples < MIN_SAMPLES({_MIN_SAMPLES})"
-         _LOG.error(msg)
-         return {"ok": False, "reason": msg}
-
-     X = _prepare_features(df)
-     y = _derive_targets(df).loc[X.index]  # align indices
-
-     X_tr, X_te, y_tr, y_te = train_test_split(
-         X, y, test_size=0.2, random_state=42, stratify=y
-     )
-
-     base = RandomForestClassifier(
-         n_estimators=200,
-         min_samples_leaf=3,
-         n_jobs=-1,
-         class_weight="balanced",
-         random_state=42,
-     )
-     model = MultiOutputClassifier(base)
-     model.fit(X_tr, y_tr)
-
-     # quick metrics
-     y_pred = model.predict(X_te)
-     acc = {
-         "water": float(accuracy_score(y_te["water"], y_pred[:, 0])),
-         "vent": float(accuracy_score(y_te["vent"], y_pred[:, 1])),
-     }
-
-     key_out = _save_model(gid, model)
-     _LOG.info("Saved model → s3://%s/%s", _BUCKET, key_out)
-
-     return {"ok": True, "samples": len(df), "model_key": key_out, "accuracy": acc}
-
-
- # ──────────────────────────────────────────────────────────────────────────────
- # Prediction (API Gateway v1/v2 or direct invoke)
- # ──────────────────────────────────────────────────────────────────────────────
-
-
- def _extract_features(payload: Dict[str, Any]) -> np.ndarray:
-     """Convert JSON payload → 2‑D numpy array accepted by sklearn."""
-
-     feats = [
-         payload["temp"],
-         payload["hum"],
-         payload["soil"],
-         payload["lux"],
-         payload["level"],
-         int(payload.get("motion", 0)),
-         int(payload.get("tamper", 0)),
-         payload.get("ax", 0),
-         payload.get("ay", 0),
-         payload.get("az", 0),
-     ]
-     return np.asarray(feats, dtype=float).reshape(1, -1)
-
-
- def _handle_predict(event: Dict[str, Any]):
-     gid = (
-         event.get("pathParameters", {}).get("id")
-         or event.get("greenhouse_id")
-         or "default"
-     )
-
-     body = event.get("body")
-     if isinstance(body, str):
-         body = json.loads(body)
-
-     X = _extract_features(body)
-     model = _load_model(gid)
-     if model is None:
-         return _resp(503, {"error": "model_not_trained"})
-
-     pred_water, pred_vent = model.predict(X)[0]
-     return _resp(200, {"water": bool(pred_water), "vent": bool(pred_vent)})
-
-
- def _resp(status: int, body: Dict[str, Any]) -> Dict[str, Any]:
-     return {
-         "statusCode": status,
-         "headers": {
-             "Content-Type": "application/json",
-             "Access-Control-Allow-Origin": "*",
-         },
-         "body": json.dumps(body),
-     }
-
-
- # ──────────────────────────────────────────────────────────────────────────────
- # Lambda entrypoint
- # ──────────────────────────────────────────────────────────────────────────────
-
-
- def handler(event: Dict[str, Any], context):  # noqa: D401, N802
-     """Single entry‑point for both **training** and **prediction**."""
-
-     _LOG.info("event=%s", json.dumps(event)[:400])
-
-     # 1️⃣ Scheduled training: {"action":"train", ...}
-     if event.get("action") == "train":
-         return _handle_train(event)
-
-     # 2️⃣ API Gateway prediction (any version)
-     if event.get("httpMethod") or "temp" in event:
-         # The second condition lets you test locally with plain feature JSON.
-         return _handle_predict(event)
-
-     raise RuntimeError("Unsupported invocation format")
+# mal/src/handler.py
+import os
+import io
+import json
+import logging
+import datetime as dt
+from typing import Dict, Tuple, Optional, List
+
+import boto3
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+)
+
+# ---------- Logging ----------
+logger = logging.getLogger()
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO)
+logger.setLevel(logging.INFO)
+
+# ---------- Environment ----------
+S3_BUCKET = os.getenv("S3_BUCKET", "")
+MIN_SAMPLES = int(os.getenv("MIN_SAMPLES", "10"))
+AWS_ENDPOINT_URL = os.getenv("AWS_ENDPOINT_URL")  # for LocalStack
+
+_s3 = boto3.client("s3", endpoint_url=AWS_ENDPOINT_URL) if AWS_ENDPOINT_URL else boto3.client("s3")
+
+# ---------- Schema ----------
+# Expected columns from TelemetryController/S3Appender (CSV):
+# DeviceMac, Timestamp (ISO), Temperature, Humidity, Soil, Lux, Level,
+# Motion, Tamper, AccelX, AccelY, AccelZ, MlWater, MlVent
+BASE_FEATURES: List[str] = [
+    "Temperature", "Humidity", "Soil", "Lux", "Level",
+    "Motion", "Tamper", "AccelX", "AccelY", "AccelZ"
+]
+LABELS = {
+    "water": "MlWater",
+    "vent": "MlVent",
+}
+
+# ---------- Utilities ----------
+def parse_s3_uri(s3_uri: str) -> Tuple[str, str]:
+    assert s3_uri.startswith("s3://"), "s3_uri must start with s3://"
+    _, _, rest = s3_uri.partition("s3://")
+    bucket, _, key = rest.partition("/")
+    return bucket, key
+
+def s3_get_csv(s3_uri: Optional[str] = None, *, bucket: Optional[str] = None, key: Optional[str] = None) -> pd.DataFrame:
+    if s3_uri:
+        bucket, key = parse_s3_uri(s3_uri)
+    if not bucket:
+        bucket = S3_BUCKET
+    if not bucket or not key:
+        raise ValueError("No S3 location provided for training data.")
+    logger.info(f"Loading CSV from s3://{bucket}/{key}")
+    obj = _s3.get_object(Bucket=bucket, Key=key)
+    body = obj["Body"].read()
+    return pd.read_csv(io.BytesIO(body))
+
+def s3_put_json(payload: dict, bucket: str, key: str) -> None:
+    logger.info(f"Writing JSON to s3://{bucket}/{key}")
+    _s3.put_object(Bucket=bucket, Key=key, Body=json.dumps(payload).encode("utf-8"), ContentType="application/json")
+
+def s3_put_joblib(obj, bucket: str, key: str) -> None:
+    logger.info(f"Writing model to s3://{bucket}/{key}")
+    buf = io.BytesIO()
+    joblib.dump(obj, buf)
+    buf.seek(0)
+    _s3.put_object(Bucket=bucket, Key=key, Body=buf.getvalue())
+
+def s3_get_joblib(bucket: str, key: str):
+    logger.info(f"Loading model from s3://{bucket}/{key}")
+    obj = _s3.get_object(Bucket=bucket, Key=key)
+    return joblib.load(io.BytesIO(obj["Body"].read()))
+
+def today_str() -> str:
+    return dt.datetime.utcnow().strftime("%Y-%m-%d")
+
+def model_key(greenhouse_id: str, target: str) -> str:
+    return f"ml/models/{greenhouse_id}/{target}_rf_cls.joblib"
+
+def metrics_key(greenhouse_id: str, target: str) -> str:
+    return f"ml/metrics/{greenhouse_id}/{target}_rf_cls_{today_str()}.json"
+
+# ---------- Data Prep ----------
+def coerce_types(df: pd.DataFrame) -> pd.DataFrame:
+    # Basic cleansing / type coercion, safe for Lambda
+    df = df.copy()
+    # Coerce numeric
+    for c in BASE_FEATURES:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    # Booleans for Motion/Tamper may come as strings
+    for c in ["Motion", "Tamper"]:
+        if c in df.columns:
+            if df[c].dtype == object:
+                df[c] = df[c].astype(str).str.lower().isin(["1", "true", "yes"])
+            df[c] = df[c].astype(int)  # 0/1
+    # Timestamp-derived hour feature (optional, helps a bit for “night” behavior)
+    if "Timestamp" in df.columns:
+        ts = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True)
+        df["Hour"] = ts.dt.hour.fillna(0).astype(int)
+    else:
+        df["Hour"] = 0
+    return df
+
+def ensure_features(df: pd.DataFrame) -> pd.DataFrame:
+    # Keep only the features we can handle; add Hour if present
+    feats = BASE_FEATURES + (["Hour"] if "Hour" in df.columns else [])
+    missing = [c for c in BASE_FEATURES if c not in df.columns]
+    if missing:
+        logger.warning(f"Missing feature columns in CSV: {missing}")
+    present = [c for c in feats if c in df.columns]
+    return df[present]
+
+def derive_labels_if_missing(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    # Heuristic labels only if ground truth is missing.
+    # WATER: recommend ON if Soil <= 40 (%). This is a conservative, transparent rule.
+    if LABELS["water"] not in df.columns:
+        df[LABELS["water"]] = (df.get("Soil", pd.Series([np.nan]*len(df))).fillna(100) <= 40).astype(int)
+        logger.info("Derived MlWater label from Soil<=40 heuristic.")
+    # VENT: recommend ON (open) if Humidity <= 45 (%); OFF otherwise (close).
+    if LABELS["vent"] not in df.columns:
+        df[LABELS["vent"]] = (df.get("Humidity", pd.Series([np.nan]*len(df))).fillna(100) <= 45).astype(int)
+        logger.info("Derived MlVent label from Humidity<=45 heuristic.")
+    return df
+
+def split_xy(df: pd.DataFrame, target: str) -> Tuple[pd.DataFrame, pd.Series]:
+    y_col = LABELS[target]
+    if y_col not in df.columns:
+        raise ValueError(f"Target column '{y_col}' not in dataset.")
+    X = ensure_features(df)
+    y = df[y_col].astype(int)
+    # Simple NA handling
+    X = X.replace([np.inf, -np.inf], np.nan).fillna(method="ffill").fillna(method="bfill").fillna(0)
+    return X, y
+
+# ---------- Training ----------
+def train_one(df: pd.DataFrame, target: str, greenhouse_id: str) -> Dict:
+    # Prepare
+    df = coerce_types(df)
+    df = derive_labels_if_missing(df)
+    X, y = split_xy(df, target)
+
+    if len(X) < max(MIN_SAMPLES, 5):
+        msg = f"Not enough samples for '{target}' (have {len(X)}, need >= {MAX_SAMPLES})."
+        logger.warning(msg)
+        return {"trained": False, "reason": msg}
+
+    # Split
+    stratify = y if y.nunique() > 1 else None
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.25, random_state=42, stratify=stratify
+    )
+
+    # Model (RF is robust, no scaling required)
+    model = RandomForestClassifier(
+        n_estimators=150,
+        max_depth=None,
+        min_samples_leaf=2,
+        random_state=42,
+        n_jobs=-1,
+        class_weight="balanced_subsample"
+    )
+    model.fit(X_train, y_train)
+
+    # Metrics
+    y_pred = model.predict(X_test)
+    metrics = {
+        "count": int(len(df)),
+        "features": list(X.columns),
+        "target": LABELS[target],
+        "accuracy": float(accuracy_score(y_test, y_pred)),
+        "precision": float(precision_score(y_test, y_pred, zero_division=0)),
+        "recall": float(recall_score(y_test, y_pred, zero_division=0)),
+        "f1": float(f1_score(y_test, y_pred, zero_division=0)),
+        "confusion_matrix": confusion_matrix(y_test, y_pred).tolist(),
+    }
+
+    # Persist model + metrics
+    mkey = model_key(greenhouse_id, target)
+    s3_put_joblib(model, S3_BUCKET, mkey)
+
+    metrics["model_s3"] = f"s3://{S3_BUCKET}/{mkey}"
+    s3_put_json(metrics, S3_BUCKET, metrics_key(greenhouse_id, target))
+
+    return {"trained": True, "metrics": metrics}
+
+def train_all(df: pd.DataFrame, greenhouse_id: str, targets: Optional[List[str]] = None) -> Dict:
+    targets = targets or ["water", "vent"]
+    out = {}
+    for t in targets:
+        try:
+            out[t] = train_one(df, t, greenhouse_id)
+        except Exception as e:
+            logger.exception(f"Training failed for target '{t}'")
+            out[t] = {"trained": False, "error": str(e)}
+    return out
+
+# ---------- Prediction ----------
+def load_model(greenhouse_id: str, target: str):
+    key = model_key(greenhouse_id, target)
+    return s3_get_joblib(S3_BUCKET, key)
+
+def predict_one(features: Dict, greenhouse_id: str, target: str) -> Dict:
+    # Minimal schema validation & ordering
+    df = pd.DataFrame([features])
+    df = coerce_types(df)
+    X = ensure_features(df)
+    X = X.replace([np.inf, -np.inf], np.nan).fillna(0)
+
+    model = load_model(greenhouse_id, target)
+    proba = model.predict_proba(X)[0][1] if hasattr(model, "predict_proba") else float(model.predict(X)[0])
+    pred = int(proba >= 0.5)
+    return {"target": target, "prediction": pred, "probability": float(proba)}
+
+# ---------- Lambda Entry ----------
+def handler(event, context):
+    """
+    Actions:
+      - {"action":"train", "s3_uri":"s3://bucket/ml/training.csv", "greenhouse_id":"gh-001", "target":"water|vent" }
+        If 'target' omitted or "target", trains both 'water' and 'vent'.
+      - {"action":"predict", "greenhouse_id":"gh-001", "target":"water|vent", "features": {...} }
+        Features keys should be among BASE_FEATURES; extra keys are ignored.
+      - {"action":"ping"}
+    """
+    try:
+        action = (event or {}).get("action", "").lower()
+        logger.info(f"Event action: {action} | event={json.dumps(event)}")
+
+        if action == "ping":
+            return _response(200, {"ok": True, "ts": dt.datetime.utcnow().isoformat() + "Z"})
+
+        if action == "train":
+            greenhouse_id = event.get("greenhouse_id") or "default"
+            s3_uri = event.get("s3_uri")  # preferred, e.g., s3://bucket/ml/training.csv
+            bucket = None
+            key = None
+            if not s3_uri:
+                # Optional fallback: allow {"bucket": "...", "key": "..."}
+                bucket = event.get("bucket") or S3_BUCKET
+                key = event.get("key")
+
+            df = s3_get_csv(s3_uri, bucket=bucket, key=key)
+            targets = None
+            t = (event.get("target") or "").lower()
+            if t in ("water", "vent"):
+                targets = [t]
+            # Else: train both
+            result = train_all(df, greenhouse_id, targets)
+            return _response(200, {"ok": True, "result": result})
+
+        if action == "predict":
+            greenhouse_id = event.get("greenhouse_id") or "default"
+            target = (event.get("target") or "").lower()
+            if target not in ("water", "vent"):
+                return _response(400, {"ok": False, "error": "target must be 'water' or 'vent'"})
+            features = event.get("features") or {}
+            # Keep only known features; allow graceful ignore of extras
+            for k in list(features.keys()):
+                if k not in BASE_FEATURES and k != "Hour":
+                    features.pop(k, None)
+            # Derive Hour if user passed Timestamp (optional) — not required
+            if "Timestamp" in features and "Hour" not in features:
+                try:
+                    features["Hour"] = pd.to_datetime(features["Timestamp"], utc=True).hour
+                except Exception:
+                    features["Hour"] = 0
+            result = predict_one(features, greenhouse_id, target)
+            return _response(200, {"ok": True, "result": result})
+
+        return _response(400, {"ok": False, "error": "Unknown or missing 'action'."})
+
+    except Exception as e:
+        logger.exception("Unhandled error")
+        return _response(500, {"ok": False, "error": str(e)})
+
+def _response(status: int, body: dict):
+    # Works for both EventBridge & API Gateway lambda-proxy integrations
+    return {
+        "statusCode": status,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(body),
+    }
