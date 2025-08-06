@@ -1,44 +1,35 @@
-name: ML‑Service CD
-
+# .github/workflows/release-on-tag.yml
+name: Release ML Artifacts (tag)
 on:
   push:
-    branches: [main]
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
 
 jobs:
-  build-and-release:
+  build-release:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Build ZIP
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y dos2unix zip
+      - name: Build Lambda layers
         run: |
-          echo "🔨 Running build_zip.sh..."
+          dos2unix scripts/build_layers.sh || true
+          bash -x scripts/build_layers.sh
+      - name: Build handler zip
+        run: |
           chmod +x scripts/build_zip.sh
-          ./scripts/build_zip.sh
-
-      - name: Create GitHub Release
-        id: create_release
-        uses: softprops/action-gh-release@v1
+          bash -x scripts/build_zip.sh
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: ML Service 1.0.0
-          tag_name: 1.0.0
-          files: ./build/ml_service.zip
+          files: |
+            .lambda_layers/sk1.zip
+            .lambda_layers/sk2.zip
+            build/ml_service.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
           fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Publish artifact to S3 and update Lambda
-        run: |
-          echo "☁️ Uploading ZIP and updating Lambda..."
-          chmod +x scripts/publish_artifact.sh
-          S3_BUCKET=greenhouse-ml-artifacts \
-          ./scripts/publish_artifact.sh build/ml_service.zip ml_service.zip greenhouse-ml
