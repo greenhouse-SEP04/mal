@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build Lambda Layers for scientific Python stack and keep the handler ZIP tiny.
 # Creates:
-#   mal/layers/sk1.zip  (numpy, scipy, joblib, threadpoolctl)
-#   mal/layers/sk2.zip  (pandas, scikit-learn)  -- installed with --no-deps
+#   mal/.lambda_layers/sk1.zip  (numpy, scipy, joblib, threadpoolctl)
+#   mal/.lambda_layers/sk2.zip  (pandas, scikit-learn)  -- installed with --no-deps
 # Usage (WSL):
 #   dos2unix scripts/build_layers.sh && chmod +x scripts/build_layers.sh
 #   bash scripts/build_layers.sh
@@ -29,7 +29,10 @@ THREADPOOLCTL="${THREADPOOLCTL:-3.2.0}"
 
 # ---- Workspace --------------------------------------------------------------
 WORKDIR="$(mktemp -d "${ROOT}/.layers_tmp_XXXXXX")"
-cleanup() { rm -rf "$WORKDIR"; }
+cleanup() {
+  # try normal remove, then fallback to sudo if needed
+  rm -rf "$WORKDIR" || sudo rm -rf "$WORKDIR"
+}
 trap cleanup EXIT
 
 # Ensure final target is a real directory (handle broken symlinks or stray files)
@@ -37,6 +40,9 @@ if [ -L "$LAYERS_DIR" ] || [ -f "$LAYERS_DIR" ] || { [ -e "$LAYERS_DIR" ] && [ !
   rm -f -- "$LAYERS_DIR"
 fi
 mkdir -p -- "$LAYERS_DIR"
+
+# Ensure WORKDIR owned by runner to avoid permission issues
+chown -R "$(id -u):$(id -g)" "$WORKDIR"
 
 echo "→ Building layers in: $WORKDIR"
 echo "→ Output directory   : $LAYERS_DIR"
