@@ -1,55 +1,58 @@
-name: Release ML Artifacts (tag)
+name: ML-Service CD
+
 on:
   push:
-    tags: ['v*.*.*']
+    branches: [main]
 
 permissions:
-  contents: write
+  contents: write  # needed for action-gh-release
 
 jobs:
-  build-release:
+  build-and-release:
     runs-on: ubuntu-latest
     defaults:
       run:
-        # run all steps from inside the `mal/` folder,
-        # so relative paths to .lambda_layers/ and build/ work
         working-directory: mal
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
       - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y dos2unix zip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dos2unix zip
 
       - name: Build Lambda layers
         run: |
           dos2unix scripts/build_layers.sh
           bash -x scripts/build_layers.sh
 
-      - name: Build handler zip
+      - name: Build handler ZIP
         run: |
           chmod +x scripts/build_zip.sh
           bash -x scripts/build_zip.sh
 
-      - name: Publish GitHub Release
+      - name: Create GitHub Release
+        id: create_release
         uses: softprops/action-gh-release@v2
         with:
-          # relative to mal/ (because of working-directory)
           files: |
             .lambda_layers/sk1.zip
             .lambda_layers/sk2.zip
             build/ml_service.zip
-          generate_release_notes: true
-          draft: false
-          prerelease: false
+          tag_name: 1.0.0
+          name: ML Service 1.0.0
           fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 #      - name: Configure AWS credentials
 #        uses: aws-actions/configure-aws-credentials@v2
 #        with:
-#          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
 #          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-#          aws-region: us-east-1
+#          aws-region:            us-east-1
 
 #      - name: Publish artifact to S3 and update Lambda
 #        run: |
