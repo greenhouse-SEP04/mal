@@ -43,3 +43,17 @@ jobs:
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
+
+#      - name: Configure AWS credentials
+#        uses: aws-actions/configure-aws-credentials@v2
+#        with:
+#          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#          aws-region: us-east-1
+
+#      - name: Publish artifact to S3 and update Lambda
+#        run: |
+#          echo "☁️ Uploading ZIP and updating Lambda..."
+#          chmod +x scripts/publish_artifact.sh
+#          S3_BUCKET=greenhouse-ml-artifacts \
+#          ./scripts/publish_artifact.sh build/ml_service.zip ml_service.zip greenhouse-ml
