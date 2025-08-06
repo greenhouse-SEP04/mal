@@ -1,4 +1,3 @@
-# mal/src/handler.py
 import os
 import io
 import json
