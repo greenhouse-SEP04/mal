@@ -1,3 +1,4 @@
+# .github/workflows/cd.yml
 name: ML-Service CD
 
 on:
@@ -5,15 +6,14 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: write  # needed for action-gh-release
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: v${{ github.run_number }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -27,8 +27,10 @@ jobs:
           key: pip-${{ runner.os }}-3.11-${{ hashFiles('requirements.txt') }}
           restore-keys: pip-${{ runner.os }}-3.11-
 
-      - name: Install minimal tools
-        run: sudo apt-get update && sudo apt-get install -y zip
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip
 
       - name: Build Lambda layers
         run: |
@@ -47,23 +49,26 @@ jobs:
             .lambda_layers/sk1.zip
             .lambda_layers/sk2.zip
             build/ml_service.zip
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: ML Service ${{ env.RELEASE_TAG }}
+          tag_name: 1.0.0
+          name: ML Service 1.0.0
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-
-#      - name: Configure AWS credentials
-#        uses: aws-actions/configure-aws-credentials@v2
-#        with:
-#          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-#          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-#          aws-region:            us-east-1
-
-#      - name: Publish artifact to S3 and update Lambda
-#        run: |
-#          echo "☁️ Uploading ZIP and updating Lambda..."
-#          chmod +x scripts/publish_artifact.sh
-#          S3_BUCKET=greenhouse-ml-artifacts \
-#          ./scripts/publish_artifact.sh build/ml_service.zip ml_service.zip greenhouse-ml
+      # -----------------------------------------------------------------------
+      # Optional: publish artifact to AWS (kept commented as requested)
+      #
+      # - name: Configure AWS credentials
+      #   uses: aws-actions/configure-aws-credentials@v2
+      #   with:
+      #     aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-region:            us-east-1
+      #
+      # - name: Publish artifact to S3 and update Lambda
+      #   run: |
+      #     echo "☁️ Uploading ZIP and updating Lambda..."
+      #     chmod +x scripts/publish_artifact.sh
+      #     S3_BUCKET=greenhouse-ml-artifacts \
+      #     ./scripts/publish_artifact.sh build/ml_service.zip ml_service.zip greenhouse-ml
+      # -----------------------------------------------------------------------
