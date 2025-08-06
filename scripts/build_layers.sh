@@ -1,25 +1,15 @@
 #!/usr/bin/env bash
-# Build Lambda Layers for scientific Python stack and keep the handler ZIP tiny.
-# Creates:
-#   mal/.lambda_layers/sk1.zip  (numpy, scipy, joblib, threadpoolctl)
-#   mal/.lambda_layers/sk2.zip  (pandas, scikit-learn)  -- installed with --no-deps
-# Usage (WSL):
-#   dos2unix scripts/build_layers.sh && chmod +x scripts/build_layers.sh
-#   bash scripts/build_layers.sh
+# Build Lambda Layers
+# Produces:
+#   .lambda_layers/sk1.zip  (numpy, scipy, joblib, threadpoolctl)
+#   .lambda_layers/sk2.zip  (pandas, scikit-learn)
 set -Eeuo pipefail
 
-# ---- Settings ---------------------------------------------------------------
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LAYERS_DIR="${LAYERS_DIR:-$ROOT/.lambda_layers}"
-
-# Python / Lambda base
 PYVER="${PYVER:-3.11}"
-BASE_IMAGE="public.ecr.aws/lambda/python:${PYVER}"
 
-# Allow forcing Docker architecture if needed (e.g., DOCKER_PLATFORM=--platform=linux/amd64)
-DOCKER_PLATFORM="${DOCKER_PLATFORM:-}"
-
-# Pin versions to Lambda-compatible manylinux wheels
+# Versions (keep in sync with requirements.txt)
 NUMPY="${NUMPY:-1.26.4}"
 SCIPY="${SCIPY:-1.11.4}"
 PANDAS="${PANDAS:-2.1.4}"
@@ -27,69 +17,42 @@ SKLEARN="${SKLEARN:-1.3.2}"
 JOBLIB="${JOBLIB:-1.3.2}"
 THREADPOOLCTL="${THREADPOOLCTL:-3.2.0}"
 
-# ---- Workspace --------------------------------------------------------------
-WORKDIR="$(mktemp -d "${ROOT}/.layers_tmp_XXXXXX")"
-cleanup() {
-  # try normal remove, then fallback to sudo if needed
-  rm -rf "$WORKDIR" || sudo rm -rf "$WORKDIR"
+TMP="$(mktemp -d "${ROOT}/.layers_tmp_XXXXXX")"
+cleanup(){
+  rm -rf "$TMP" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-# Ensure final target is a real directory (handle broken symlinks or stray files)
-if [ -L "$LAYERS_DIR" ] || [ -f "$LAYERS_DIR" ] || { [ -e "$LAYERS_DIR" ] && [ ! -d "$LAYERS_DIR" ]; }; then
-  rm -f -- "$LAYERS_DIR"
-fi
-mkdir -p -- "$LAYERS_DIR"
+mkdir -p "$LAYERS_DIR" \
+         "$TMP/wheels" \
+         "$TMP/sk1/python/lib/python${PYVER}/site-packages" \
+         "$TMP/sk2/python/lib/python${PYVER}/site-packages"
 
-# Ensure WORKDIR owned by runner to avoid permission issues
-chown -R "$(id -u):$(id -g)" "$WORKDIR"
+echo "→ Downloading wheels (manylinux) to $TMP/wheels"
+python -m pip install --upgrade pip wheel setuptools >/dev/null
+python -m pip download --only-binary=:all: \
+  -d "$TMP/wheels" \
+  numpy=="$NUMPY" scipy=="$SCIPY" joblib=="$JOBLIB" threadpoolctl=="$THREADPOOLCTL" \
+  pandas=="$PANDAS" scikit-learn=="$SKLEARN"
 
-echo "→ Building layers in: $WORKDIR"
-echo "→ Output directory   : $LAYERS_DIR"
-echo "→ Lambda base image  : $BASE_IMAGE (PY $PYVER)"
-echo
+echo "→ Installing into layer directories (from local wheels only)"
+python -m pip install --no-index --find-links "$TMP/wheels" \
+  -t "$TMP/sk1/python/lib/python${PYVER}/site-packages" \
+  numpy=="$NUMPY" scipy=="$SCIPY" joblib=="$JOBLIB" threadpoolctl=="$THREADPOOLCTL"
 
-# ---- Build inside Lambda base image for ABI-compatible wheels ---------------
-docker run --rm $DOCKER_PLATFORM \
-  --entrypoint /bin/bash \
-  -e PIP_ONLY_BINARY=":all:" \
-  -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
-  -v "$WORKDIR:/layers" \
-  "$BASE_IMAGE" -lc "
-    set -Eeuo pipefail
-    echo ':: Python:'; python -V
-    python -m pip install --upgrade pip wheel setuptools
+python -m pip install --no-index --find-links "$TMP/wheels" --no-deps \
+  -t "$TMP/sk2/python/lib/python${PYVER}/site-packages" \
+  pandas=="$PANDAS" scikit-learn=="$SKLEARN"
 
-    mkdir -p /layers/sk1/python/lib/python${PYVER}/site-packages
-    mkdir -p /layers/sk2/python/lib/python${PYVER}/site-packages
+echo "→ Pruning tests and caches"
+for d in "$TMP/sk1/python/lib/python${PYVER}/site-packages" "$TMP/sk2/python/lib/python${PYVER}/site-packages"; do
+  find "$d" -type d \( -iname tests -o -iname testing -o -iname __pycache__ \) -prune -exec rm -rf {} + || true
+  find "$d" -type f -name '*.pyc' -delete || true
+done
 
-    echo ':: Installing layer sk1 (numpy, scipy, joblib, threadpoolctl)'
-    python -m pip install --no-cache-dir \
-      -t /layers/sk1/python/lib/python${PYVER}/site-packages \
-      numpy==${NUMPY} \
-      scipy==${SCIPY} \
-      joblib==${JOBLIB} \
-      threadpoolctl==${THREADPOOLCTL}
+echo "→ Zipping layers"
+( cd "$TMP/sk1" && python -m zipfile -c "$LAYERS_DIR/sk1.zip" python )
+( cd "$TMP/sk2" && python -m zipfile -c "$LAYERS_DIR/sk2.zip" python )
 
-    echo ':: Installing layer sk2 (pandas, scikit-learn) with --no-deps'
-    python -m pip install --no-cache-dir --no-deps \
-      -t /layers/sk2/python/lib/python${PYVER}/site-packages \
-      pandas==${PANDAS} \
-      scikit-learn==${SKLEARN}
-
-    echo ':: Zipping layers with correct internal layout (python/...)'
-    cd /layers/sk1 && python -m zipfile -c ../sk1.zip python
-    cd /layers/sk2 && python -m zipfile -c ../sk2.zip python
-  "
-
-# ---- Move artifacts out of temp dir -----------------------------------------
-mv -f "$WORKDIR"/sk1.zip "$LAYERS_DIR"/
-mv -f "$WORKDIR"/sk2.zip "$LAYERS_DIR"/
-
-echo
-echo "✅ Built layers:"
+echo "✅ Built:"
 ls -lh "$LAYERS_DIR"/sk*.zip
-echo
-echo "Tip: If Lambda can't import modules, verify the layer structure via:"
-echo "  unzip -l \"$LAYERS_DIR/sk1.zip\" | head"
-echo "  unzip -l \"$LAYERS_DIR/sk2.zip\" | head"
