@@ -49,8 +49,8 @@ jobs:
             .lambda_layers/sk1.zip
             .lambda_layers/sk2.zip
             build/ml_service.zip
-          tag_name: v1.0.0.0
-          name: ML Service v1.0.0.0
+          tag_name: v1.0.0
+          name: ML Service v1.0.0
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
