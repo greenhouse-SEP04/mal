@@ -33,16 +33,17 @@ when to **water the plants** and when to **open the ventilation** based on telem
 
 ```mermaid
 flowchart TD
-    A[IoT node (AVR\n`ews`)] -- CSV telemetry --> S3[(Telemetry bucket)]
+    A[IoT node<br>AVR ews] -- CSV telemetry --> S3[(Telemetry bucket)]
     subgraph ML Service
-        B(API Gateway \n POST /v1/predict)
-        C[Lambda handler (src/handler.py)]
-        D[(ML models\n.joblib in S3)]
+        B[API Gateway<br>POST /v1/predict]
+        C[Lambda handler<br>src/handler.py]
+        D[(ML models<br>.joblib in S3)]
     end
     B --> C
     C -- get/put --> D
-    E[GitHub Actions CD] --> F((Release assets)) --> Terraform --> C
+    E[GitHub Actions CD] --> F[(Release assets)] --> Terraform --> C
     EventBridge -->|hourly| C
+
 ```
 
 * **Inference**: The AVR device POSTs a JSON event to **/v1/predict**; API Gateway invokes the Lambda which loads the latest model from S3 and returns a binary decision (on/off) plus probability.
