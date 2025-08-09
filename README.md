@@ -107,20 +107,24 @@ sam local invoke -e events/predict_water.json \
 
 ## Data Schema
 
+<div align="center">
+
 | Column        | Type     | Description                     |
 | ------------- | -------- | ------------------------------- |
 | `DeviceMac`   | string   | MAC address of IoT node         |
-| `Timestamp`   | ISO 8601 | Sample time (UTC)               |
+| `Timestamp`   | ISO 8601 | Sample time (UTC)               |
 | `Temperature` | °C       | Air temperature                 |
-| `Humidity`    | % RH     | Air humidity                    |
-| `Soil`        | %        | Soil moisture (0 dry – 100 wet) |
+| `Humidity`    | % RH     | Air humidity                    |
+| `Soil`        | %        | Soil moisture (0 dry – 100 wet) |
 | `Lux`         | lux      | Light intensity                 |
 | `Level`       | cm       | Tank water level                |
 | `Motion`      | 0/1      | PIR motion flag                 |
 | `Tamper`      | 0/1      | ADXL345 tamper flag             |
 | `AccelX/Y/Z`  | int      | Raw accelerometer axes          |
-| `MlWater`     | 0/1      | Ground‑truth label (optional)   |
-| `MlVent`      | 0/1      | Ground‑truth label (optional)   |
+| `MlWater`     | 0/1      | Ground-truth label (optional)   |
+| `MlVent`      | 0/1      | Ground-truth label (optional)   |
+
+</div>
 
 If labels are missing the Lambda derives **heuristic labels** (water ↔ `Soil <= 40`, vent ↔ `Humidity <= 45`) so it can train even with unlabeled data.
 
