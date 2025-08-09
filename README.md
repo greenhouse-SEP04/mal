@@ -5,15 +5,15 @@ when to **water the plants** and when to **open the ventilation** based on telem
 
 <div align="center">
     
-    > **Key facts**
-    >
-    > |          | Details                                                        |
-    > | -------- | -------------------------------------------------------------- |
-    > | Language | Python 3.11                                                    |
-    > | Runtime  | AWS Lambda (zip + layers)                                      |
-    > | ML libs  | *scikit‑learn*, *pandas*, *numpy*                              |
-    > | CI/CD    | GitHub Actions → Release assets → Terraform deploy             |
-    > | Infra    | S3 (telemetry+artifacts), API Gateway, EventBridge, CloudWatch |
+> **Key facts**
+>
+> |          | Details                                                        |
+> | -------- | -------------------------------------------------------------- |
+> | Language | Python 3.11                                                    |
+> | Runtime  | AWS Lambda (zip + layers)                                      |
+> | ML libs  | *scikit‑learn*, *pandas*, *numpy*                              |
+> | CI/CD    | GitHub Actions → Release assets → Terraform deploy             |
+> | Infra    | S3 (telemetry+artifacts), API Gateway, EventBridge, CloudWatch |
     
 </div>
 
@@ -113,20 +113,20 @@ sam local invoke -e events/predict_water.json \
 
 <div align="center">
     
-    | Column        | Type     | Description                     |
-    | ------------- | -------- | ------------------------------- |
-    | `DeviceMac`   | string   | MAC address of IoT node         |
-    | `Timestamp`   | ISO 8601 | Sample time (UTC)               |
-    | `Temperature` | °C       | Air temperature                 |
-    | `Humidity`    | % RH     | Air humidity                    |
-    | `Soil`        | %        | Soil moisture (0 dry – 100 wet) |
-    | `Lux`         | lux      | Light intensity                 |
-    | `Level`       | cm       | Tank water level                |
-    | `Motion`      | 0/1      | PIR motion flag                 |
-    | `Tamper`      | 0/1      | ADXL345 tamper flag             |
-    | `AccelX/Y/Z`  | int      | Raw accelerometer axes          |
-    | `MlWater`     | 0/1      | Ground-truth label (optional)   |
-    | `MlVent`      | 0/1      | Ground-truth label (optional)   |
+| Column        | Type     | Description                     |
+| ------------- | -------- | ------------------------------- |
+| `DeviceMac`   | string   | MAC address of IoT node         |
+| `Timestamp`   | ISO 8601 | Sample time (UTC)               |
+| `Temperature` | °C       | Air temperature                 |
+| `Humidity`    | % RH     | Air humidity                    |
+| `Soil`        | %        | Soil moisture (0 dry – 100 wet) |
+| `Lux`         | lux      | Light intensity                 |
+| `Level`       | cm       | Tank water level                |
+| `Motion`      | 0/1      | PIR motion flag                 |
+| `Tamper`      | 0/1      | ADXL345 tamper flag             |
+| `AccelX/Y/Z`  | int      | Raw accelerometer axes          |
+| `MlWater`     | 0/1      | Ground-truth label (optional)   |
+| `MlVent`      | 0/1      | Ground-truth label (optional)   |
 
 </div>
 
@@ -192,11 +192,11 @@ Response:
 
 <div align="center">
     
-    | ENV var            | Default   | Purpose                        |
-    | ------------------ | --------- | ------------------------------ |
-    | `S3_BUCKET`        | *(none)*  | Telemetry & model bucket       |
-    | `MIN_SAMPLES`      | `10`      | Minimum rows required to train |
-    | `AWS_ENDPOINT_URL` | *(unset)* | Override for **LocalStack**    |
+| ENV var            | Default   | Purpose                        |
+| ------------------ | --------- | ------------------------------ |
+| `S3_BUCKET`        | *(none)*  | Telemetry & model bucket       |
+| `MIN_SAMPLES`      | `10`      | Minimum rows required to train |
+| `AWS_ENDPOINT_URL` | *(unset)* | Override for **LocalStack**    |
     
 </div>
 
