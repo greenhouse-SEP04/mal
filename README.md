@@ -211,33 +211,6 @@ Response:
 
 ---
 
-## Testing
-
-Unit tests live under `tests/` (WIP).
-
-```bash
-pytest -q
-```
-
-For integration you can spin up **LocalStack**:
-
-```bash
-localstack start -d
-export AWS_ENDPOINT_URL=http://localhost:4566
-python src/handler.py  # invoke however you like
-```
-
----
-
-## Contributing
-
-1. Fork & create a feature branch.
-2. Follow the [commit convention](https://www.conventionalcommits.org/) – this feeds the release notes.
-3. Run `pre‑commit run ‑‑all-files` before pushing.
-4. Open a PR – CI must be ✔️ for merge.
-
----
-
 ## License
 
 Distributed under the MIT License.  See `LICENSE` for details.
