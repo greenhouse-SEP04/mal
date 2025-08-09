@@ -33,7 +33,7 @@ when to **water the plants** and when to **open the ventilation** based on telem
 
 ```mermaid
 flowchart TD
-    A[IoT node<br>AVR ews] -- CSV telemetry --> S3[(Telemetry bucket)]
+    A[IoT node<br>AVR] -- CSV telemetry --> S3[(Telemetry bucket)]
     subgraph ML Service
         B[API Gateway<br>POST /v1/predict]
         C[Lambda handler<br>src/handler.py]
