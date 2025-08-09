@@ -1,7 +1,7 @@
 # 🌱 Greenhouse Machine‑Learning Service (`mal`)
 
 This repository contains the **machine‑learning micro‑service** for the SEP4 Greenhouse project.  It trains and serves lightweight ML models that decide
-when to **water the plants** and when to **open the ventilation** based on telemetry streamed from the IoT node (`ews`).  The service is designed for low‑latency inference on AWS Lambda while retaining reproducible, version‑controlled builds via GitHub Actions and Terraform.
+when to **water the plants** and when to **open the ventilation** based on telemetry streamed from the IoT node.  The service is designed for low‑latency inference on AWS Lambda while retaining reproducible, version‑controlled builds via GitHub Actions and Terraform.
 
 > **Key facts**
 >
